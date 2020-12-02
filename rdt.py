@@ -18,6 +18,5 @@ class socket(UDPsocket):
 
     def recv(self):
         pass
-
     def send(self):
         pass
