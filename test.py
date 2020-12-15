@@ -7,7 +7,13 @@ a=bytes(a)
 print(a)
 b=struct.unpack("!???IIIH", a[:17])
 print(b)
+print(type(b[6]))
 msg=a[17:].decode()
 print(msg)
 i=4294967295
 print(type(i))
+
+if b'':
+    print(True)
+else:
+    print(False)

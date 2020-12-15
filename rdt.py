@@ -129,8 +129,8 @@ class Segment:
         self.syn=syn
         self.fin=fin
         self.ack=ack
-        self.seq_num=seq_num%Segment.MAX_NUM
-        self.ack_num=ack_num%Segment.MAX_NUM
+        self.seq_num=seq_num%(Segment.MAX_NUM+1)
+        self.ack_num=ack_num%(Segment.MAX_NUM+1)
         self.length=length
         self.checksum=checksum
         self.payload=payload
@@ -138,15 +138,17 @@ class Segment:
     def encode(self) -> bytes:
         '''
         ! 表示网络传输
-        ? 表示 bool        (1 bit)
+        ? 表示 bool        (1 byte)
         I 表示 无符号int    (4 byte)
         H 表示 无符号short  (2 byte)
+        B 表示 无符号char   (1 byte)
         '''
         data=bytearray(struct.pack("!???III", self.syn, self.fin, self.ack, self.seq_num, self.ack_num, self.length))
 
         self.checksum=Segment.calculate_checksum(data)
         data.extend(self.checksum)
         # 现在 header 封装完毕，header 长度为 17 byte (1+1+1+4+4+4+2)
+        # XXX: 前三个 bit 其实用一个 byte 表示就够了, header 长度减小到 15 byte
 
         if self.payload:
             data.extend(self.payload) # 在后面加上数据
@@ -156,8 +158,9 @@ class Segment:
     @staticmethod
     def decode(data:bytes) -> Segment:
         syn, fin, ack, seq_num, ack_num, length, checksum=struct.unpack("!???IIIH", data[:17])
-        payload=data[17:]
-        return Segment(syn, fin, ack, seq_num, ack_num, length, payload, checksum=checksum)
+        # 注意 python 没有 short 类型, checksum 是个 int
+        payload=data[17:] # 注意如果 data 里没有数据的话, 这里 payload=b'' 空字符串
+        return Segment(syn, fin, ack, seq_num, ack_num, length, payload, checksum)
     
     @staticmethod
     def calculate_checksum(bytearr) -> bytes:
