@@ -107,6 +107,16 @@ class RDTSocket(UnreliableSocket):
         assert self._recv_from_addr, "Connection not established yet. Use recvfrom instead."
 
         # TODO: 接收窗口
+        '''
+        下一步想法:
+        while True:
+            如果不是对方发的: continue
+            收消息
+            如果是 fin: 回复 ack_handshake 然后 break
+            检查有没有问题，有问题发最后的 ack_num 回去
+            没问题，在接收窗口标记这个包正确收到了
+        拼成整体，return
+        '''
 
         # 只收来自 _recv_from_addr 的消息
         while True:
@@ -116,16 +126,31 @@ class RDTSocket(UnreliableSocket):
 
         segment_recieved=Segment.decode(data)
 
-        # checksum 不对，发最后一个 ack_num 提示对方重传
-        if (Segment.calculate_checksum(segment_recieved)!=segment_recieved.checksum or
+        # checksum 不对，说明包有错，发最后一个 ack_num 提示对方重传
+        if Segment.calculate_checksum(segment_recieved)!=segment_recieved.checksum:
+            self.sendto(Segment(seq_num=self.next_seq_num, ack_num=self.next_ack_num).encode(), self._send_to_addr)
+            return None
+
         # seq_num 和 next_ack_num 不一样，说明收到的不是现在想要的包
-        segment_recieved.seq_num!=self.next_ack_num):
-            self.send(Segment(seq_num=self.next_seq_num, ack_num=self.next_ack_num).encode())
+        if segment_recieved.seq_num!=self.next_ack_num:
+            self.sendto(Segment(seq_num=self.next_seq_num, ack_num=self.next_ack_num).encode(), self._send_to_addr)
             return None
 
         # 正确接收，更新 next_ack_num
         self.next_ack_num=segment_recieved.seq_num+segment_recieved.length
         # TODO: 把 ack_num 之前的包标记为已经正确传输完毕
+
+        # 是 fin, 回 ack, 然后发 fin, 等 ack
+        if segment_recieved.is_fin_handshake():
+            self.sendto(Segment.ack_handshake(seq_num=self.next_seq_num, ack_num=self.next_ack_num), self._send_to_addr)
+            self.sendto(Segment.fin_handshake(seq_num=self.next_seq_num, ack_num=self.next_ack_num), self._send_to_addr)
+            while True:
+                data, addr=self.recvfrom(4096)
+                if addr==self._recv_from_addr:
+                    segment=Segment.decode(data)
+                    if segment.is_ack_handshake():
+                        super().close()
+                        return None
 
         return segment_recieved.payload
 
@@ -150,7 +175,22 @@ class RDTSocket(UnreliableSocket):
         Finish the connection and release resources. For simplicity, assume that
         after a socket is closed, neither futher sends nor receives are allowed.
         """
-
+        # 四次握手 (发送端行为)
+        self.sendto(Segment.fin_handshake().encode(), self._send_to_addr)
+        while True:
+            data, addr=self.recvfrom(4096)
+            if addr==self._send_to_addr:
+                segment=Segment.decode(data)
+                if segment.is_ack_handshake():
+                    break
+        while True:
+            data, addr=self.recvfrom(4096)
+            if addr==self._send_to_addr:
+                segment=Segment.decode(data)
+                if segment.is_fin_handshake():
+                    self.sendto(Segment.ack_handshake().encode(), self._send_to_addr)
+                    break
+                    
         super().close()
         
     def set_send_to_addr(self, _send_to_addr):
@@ -236,20 +276,20 @@ class Segment:
 
     # seq_num=ack_num=-1 表示这是握手报文段
     @staticmethod
-    def syn_handshake() -> Segment:
-        return Segment(syn=True, fin=False, ack=False, seq_num=-1, ack_num=-1)
+    def syn_handshake(seq_num=-1, ack_num=-1) -> Segment:
+        return Segment(syn=True, fin=False, ack=False, seq_num=seq_num, ack_num=ack_num)
 
     @staticmethod
-    def synack_handshake() -> Segment:
-        return Segment(syn=True, fin=False, ack=True, seq_num=-1, ack_num=-1)
+    def synack_handshake(seq_num=-1, ack_num=-1) -> Segment:
+        return Segment(syn=True, fin=False, ack=True, seq_num=seq_num, ack_num=ack_num)
     
     @staticmethod
-    def ack_handshake() -> Segment:
-        return Segment(syn=False, fin=False, ack=True, seq_num=-1, ack_num=-1)
+    def ack_handshake(seq_num=-1, ack_num=-1) -> Segment:
+        return Segment(syn=False, fin=False, ack=True, seq_num=seq_num, ack_num=ack_num)
 
     @staticmethod
-    def fin_handshake() -> Segment:
-        return Segment(syn=False, fin=True, ack=False, seq_num=-1, ack_num=-1)
+    def fin_handshake(seq_num=-1, ack_num=-1) -> Segment:
+        return Segment(syn=False, fin=True, ack=False, seq_num=seq_num, ack_num=ack_num)
 
     def is_syn_handshake(self) -> bool:
         return self.syn and not self.fin and not self.ack
