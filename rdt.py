@@ -29,7 +29,27 @@ class RDTSocket(UnreliableSocket):
         self.next_seq_num=None
         self.next_ack_num=None
 
-    # connect+accept 是三次握手
+    '''
+    connect+accept 是三次握手
+
+    建立连接的过程:
+        1. server 其实也是一个 socket，比如他运行在 1234 端口上，他的任务只是监听有没有人想连他
+        2. client 向 server (port=1234) 发 syn
+        3. server 收到 syn 了，他会新建一个叫 conn 的 socket，把他许配给这个 client，这个 conn 的端口号由系统自动分配
+        4. conn 向刚才那个 client 发 synack (发的时候，系统底层会自动分配给 conn 一个端口)，从此以后，server 和这个 client 之间的所有收发全部由 conn 接手
+        5. client 收到了 synack，他发现是从一个新 port 发过来的，于是他知道对面的 server 给他分配了一个 conn，他把 conn 的地址记下来，以后有什么数据就发往 conn 的地址
+        6. client 向 conn 发 ack
+        7. conn 收到 ack，三次握手完成
+
+        所以整体结构是这样的，比如我有三个 client 要连 server
+                  ----server------
+                  /    |     \    \
+                conn1 conn2 conn3 ...
+                  |    |      |    |
+                clie1 clie2 clie3 ...
+
+        所以当 client 发完数据的时候，他 close() 只是关掉了和 conn 之间的连接，不会影响 server
+    '''
     def accept(self)->('RDTSocket', (str, int)):
         """
         Accept a connection. The socket must be bound to an address and listening for 
@@ -87,13 +107,13 @@ class RDTSocket(UnreliableSocket):
             self.sendto(Segment.syn_handshake().encode(), addr)
 
             # recieve synack
-            data, addr2=self.recvfrom(4096)
+            data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
             segment=Segment.decode(data)
 
             # send ack
             if segment.is_synack_handshake():
                 self.sendto(Segment.ack_handshake().encode(), addr2)
-                self.set_send_to_addr(addr2) # 连上了，以后就给 addr 发消息
+                self.set_send_to_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
 
                 self.next_seq_num=0
                 self.next_ack_num=0
