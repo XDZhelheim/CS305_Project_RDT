@@ -8,7 +8,7 @@ if __name__ == "__main__":
         while True:
             conn, addr=server.accept()
             while True:
-                data=conn.recv(4096)
+                data=conn.recv(1024000)
                 if data:
                     print("recieved payload: "+data.decode())
                     if data==b"exit":

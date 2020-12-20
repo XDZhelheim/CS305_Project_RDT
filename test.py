@@ -17,4 +17,3 @@ print(b)
 # print(type(b[6]))
 msg=a[17:].decode()
 print(msg)
-
