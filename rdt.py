@@ -23,9 +23,8 @@ class RDTSocket(UnreliableSocket):
 
     def __init__(self, rate=None, debug=True):
         super().__init__(rate=rate)
-        self._rate = rate
-        self._send_to_addr = None
-        self._recv_from_addr = None
+        self._rate= rate
+        self._connect_addr=None
         DEBUG=debug
 
         # self.next_seq_num=None
@@ -80,10 +79,7 @@ class RDTSocket(UnreliableSocket):
                 data, addr2=conn.recvfrom(4096) # recvfrom 是阻塞的，会一直在这等着直到收到消息
                 segment=Segment.decode(data)
                 if addr==addr2 and segment.is_ack_handshake():
-                    conn.set_recv_from_addr(addr) # 连上了，以后就收 addr 发的消息
-
-                    # conn.next_seq_num=0
-                    # conn.next_ack_num=0
+                    conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
 
                     if DEBUG:
                         print("Accept OK")
@@ -116,10 +112,7 @@ class RDTSocket(UnreliableSocket):
             # send ack
             if segment.is_synack_handshake():
                 self.sendto(Segment.ack_handshake().encode(), addr2)
-                self.set_send_to_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
-
-                # self.next_seq_num=0
-                # self.next_ack_num=0
+                self.set_connect_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
 
                 break
             # else:
@@ -139,14 +132,16 @@ class RDTSocket(UnreliableSocket):
     现在已经没有什么 ack=seq+length 了，那个是 TCP 的玩法
     '''
 
+    TIMEOUT_VALUE=0.01 # 0.01s 认为超时
+
     def send(self, data:bytes):
         """
         Send data to the socket. 
         The socket must be connected to a remote socket, i.e. self._send_to_addr must not be none.
         """
-        assert self._send_to_addr, "Connection not established yet. Use sendto instead."
+        assert self._connect_addr, "Connection not established yet. Use sendto instead."
 
-        # TODO: 计时器，超时重发
+        # TODO: 多线程: 三个线程：发包，收 ack，timers
 
         # 初始化发送窗口
         all_segments=[]
@@ -163,33 +158,43 @@ class RDTSocket(UnreliableSocket):
             all_segments.append(segment)
         # flags 数组用来标记包的状态: 0-还没发，1-已经收到 ack 可以不用管了，2-发了，还在等 ack
         flags=[0]*num_of_segments # 初始化为全 0
+        timers=[Timer(i) for i in range(num_of_segments)] # 每个 segment 给一个 timer，timer 的 timer_id 等于他的下标
 
         # SR
         # self.setblocking(False) # 取消阻塞，否则发完第一个包会一直处于等待 ack 的状态
         while True:
-            if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
-                self.sendto(all_segments[next_seq_num].encode(), self._send_to_addr)
-                flags[next_seq_num]=2
-                next_seq_num+=1
+            try:
+                if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
+                    self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
+                    # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行
+                    flags[next_seq_num]=2
+                    next_seq_num+=1
 
-            data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
+                data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
 
-            segment_recieved=Segment.decode(data)
-            if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
-                continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
-            elif not segment_recieved.is_ack():
-                continue # 收到的不是 ack，丢掉不管
-            elif flags[segment_recieved.ack_num]==1:
-                continue # 收到的 ack 是已经 ack 过的，丢掉不管
-            elif flags[segment_recieved.ack_num]==0:
-                continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
+                segment_recieved=Segment.decode(data)
+                if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
+                    continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
+                elif not segment_recieved.is_ack():
+                    continue # 收到的不是 ack，丢掉不管
+                elif flags[segment_recieved.ack_num]==1:
+                    continue # 收到的 ack 是已经 ack 过的，丢掉不管
+                elif flags[segment_recieved.ack_num]==0:
+                    continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
 
-            # 以下为正常接收 ack 之后
-            flags[segment_recieved.ack_num]=1
-            while send_base<num_of_segments and flags[send_base]==1:
-                send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
-            if send_base>=num_of_segments:
-                break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
+                # 以下为正常接收 ack 之后
+                flags[segment_recieved.ack_num]=1
+                timers[segment_recieved.ack_num].closed=True # 关闭 timer
+                while send_base<num_of_segments and flags[send_base]==1:
+                    send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
+                if send_base>=num_of_segments:
+                    break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
+
+            except TimeoutException as e: # 捕获到有包超时
+                # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
+                resend_index=e.timer_id # 这个下标就是我要重传的包的下标
+                self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
+                timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
         
         # 发个 fin 告诉你我发完了，你那边可以停止接收了
         start=time.time()
@@ -197,10 +202,10 @@ class RDTSocket(UnreliableSocket):
             end=time.time()
             if end-start>0.1:
                 break # 对面发回来的 ack 可能丢失，我一共就等 0.1s，反正数据都正确传好了，最多 0.1s 我就结束
-            self.sendto(Segment.fin_handshake().encode(), self._send_to_addr)
+            self.sendto(Segment.fin_handshake().encode(), self._connect_addr)
             data, addr=None, None
             data, addr=self.recvfrom(4096)
-            if addr!=self._send_to_addr:
+            if addr!=self._connect_addr:
                 continue
             if data:
                 break # 也别管收到的 ack 有没有错了，收到东西就证明对面收到我的 fin 了，停止发送
@@ -215,7 +220,7 @@ class RDTSocket(UnreliableSocket):
         In other words, if someone else sends data to you from another address,
         it MUST NOT affect the data returned by this function.
         """
-        assert self._recv_from_addr, "Connection not established yet. Use recvfrom instead."
+        assert self._connect_addr, "Connection not established yet. Use recvfrom instead."
 
         # 初始化接收窗口
         recv_window_size=8
@@ -229,9 +234,9 @@ class RDTSocket(UnreliableSocket):
         all_recieved_payloads=bytearray()
 
         while True:
-            # 只收来自 _recv_from_addr 的消息  
+            # 只收来自 _connect_addr 的消息  
             data, addr=self.recvfrom(bufsize)
-            if addr!=self._recv_from_addr:
+            if addr!=self._connect_addr:
                 continue
 
             segment_recieved=Segment.decode(data)
@@ -239,16 +244,16 @@ class RDTSocket(UnreliableSocket):
             if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
                 continue # 收到坏包，直接丢弃，等对面超时重发
             elif segment_recieved.is_fin_handshake():
-                self.sendto(Segment.ack_handshake().encode(), self._recv_from_addr) # 收到 fin，停止接收
+                self.sendto(Segment.ack_handshake().encode(), self._connect_addr) # 收到 fin，停止接收
                 break
             elif segment_recieved.seq_num<recv_base:
-                self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._recv_from_addr) # 收到了已经交付的包，回个 ack
+                self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._connect_addr) # 收到了已经交付的包，回个 ack
                 continue
             elif segment_recieved.seq_num>=recv_base+recv_window_size:
                 continue # 超出接收窗口了，丢弃
 
             # 以下为正确接收
-            self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._recv_from_addr)
+            self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._connect_addr)
             recv_window[segment_recieved.seq_num]=segment_recieved
             while recv_base<max_num_of_recieved_segments and recv_window[recv_base]:
                 all_recieved_payloads.extend(recv_window[recv_base].payload)
@@ -279,12 +284,9 @@ class RDTSocket(UnreliableSocket):
                     
         super().close()
         
-    def set_send_to_addr(self, _send_to_addr):
-        self._send_to_addr = _send_to_addr
+    def set_connect_addr(self, addr):
+        self._connect_addr=addr
     
-    def set_recv_from_addr(self, _recv_from_addr):
-        self._recv_from_addr = _recv_from_addr
-
 class Segment:
     '''
     field       length          range               type
@@ -411,3 +413,22 @@ class Segment:
 
     def is_ack(self) -> bool:
         return not self.syn and not self.fin and not self.ack and self.seq_num==self.MAX_NUM and self.length==0
+
+class Timer:
+    def __init__(self, timer_id):
+        self.timer_id=timer_id
+        self.closed=False
+    
+    def start(self, timeout_value):
+        start=time.time()
+        while True:
+            if (self.closed):
+                break
+            end=time.time()
+            if (end-start>timeout_value):
+                raise TimeoutException(self.timer_id)
+
+class TimeoutException(Exception):
+    def __init__(self, timer_id):
+        super().__init__()
+        self.timer_id=timer_id
