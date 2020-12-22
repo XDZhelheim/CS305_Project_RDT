@@ -133,6 +133,7 @@ class RDTSocket(UnreliableSocket):
     '''
 
     TIMEOUT_VALUE=0.01 # 0.01s 认为超时
+    THRESHOLD=8 # 慢启动阈值
 
     def send(self, data:bytes):
         """
@@ -145,7 +146,7 @@ class RDTSocket(UnreliableSocket):
 
         # 初始化发送窗口
         all_segments=[]
-        send_window_size=8
+        send_window_size=1
         send_base=0
         next_seq_num=0
 
@@ -166,7 +167,7 @@ class RDTSocket(UnreliableSocket):
             try:
                 if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
                     self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
-                    # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行
+                    # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行，每个 timer 一个线程
                     flags[next_seq_num]=2
                     next_seq_num+=1
 
@@ -185,6 +186,13 @@ class RDTSocket(UnreliableSocket):
                 # 以下为正常接收 ack 之后
                 flags[segment_recieved.ack_num]=1
                 timers[segment_recieved.ack_num].closed=True # 关闭 timer
+
+                # 发送窗口变大
+                if send_window_size<self.THRESHOLD:
+                    send_window_size*=2 # 指数增长阶段
+                else:
+                    send_window_size+=1
+
                 while send_base<num_of_segments and flags[send_base]==1:
                     send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
                 if send_base>=num_of_segments:
@@ -195,6 +203,9 @@ class RDTSocket(UnreliableSocket):
                 resend_index=e.timer_id # 这个下标就是我要重传的包的下标
                 self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
                 timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
+                # 拥塞控制，发送窗口大小=1，重设阈值
+                self.THRESHOLD=send_window_size/2
+                send_window_size=1
         
         # 发个 fin 告诉你我发完了，你那边可以停止接收了
         start=time.time()
@@ -223,7 +234,7 @@ class RDTSocket(UnreliableSocket):
         assert self._connect_addr, "Connection not established yet. Use recvfrom instead."
 
         # 初始化接收窗口
-        recv_window_size=8
+        recv_window_size=8 # 这个 size 好像没啥用
         recv_base=0
 
         # 不知道对面一共要发几个包，接收窗口只能设成最大长度了
