@@ -3,6 +3,7 @@ import threading
 import time
 import struct
 import math
+from fractions import Fraction
 
 DEBUG=True
 
@@ -133,7 +134,7 @@ class RDTSocket(UnreliableSocket):
     '''
 
     TIMEOUT_VALUE=0.01 # 0.01s 认为超时
-    THRESHOLD=8 # 慢启动阈值
+    SSTHRESH=8 # 慢启动阈值
 
     def send(self, data:bytes):
         """
@@ -149,6 +150,7 @@ class RDTSocket(UnreliableSocket):
         send_window_size=1
         send_base=0
         next_seq_num=0
+        temp=0 # 这个变量只在拥塞控制的时候用
 
         # 分段
         num_of_segments=math.ceil(len(data)/Segment.MAX_PAYLOAD_SIZE) # num_of_segments 等于 len(all_segments)
@@ -188,10 +190,13 @@ class RDTSocket(UnreliableSocket):
                 timers[segment_recieved.ack_num].closed=True # 关闭 timer
 
                 # 发送窗口变大
-                if send_window_size<self.THRESHOLD:
-                    send_window_size*=2 # 指数增长阶段
+                if send_window_size<self.SSTHRESH:
+                    send_window_size+=1 # 指数增长阶段
                 else:
-                    send_window_size+=1
+                    temp+=Fraction(1, send_window_size)
+                    if temp==1:
+                        send_window_size+=1
+                        temp=0
 
                 while send_base<num_of_segments and flags[send_base]==1:
                     send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
@@ -204,7 +209,7 @@ class RDTSocket(UnreliableSocket):
                 self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
                 timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
                 # 拥塞控制，发送窗口大小=1，重设阈值
-                self.THRESHOLD=send_window_size/2
+                self.SSTHRESH=send_window_size/2
                 send_window_size=1
         
         # 发个 fin 告诉你我发完了，你那边可以停止接收了
