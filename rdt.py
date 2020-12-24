@@ -1,3 +1,11 @@
+'''
+Reliable Data Transfer Socket
+Author: 11812804 董正
+        11811305 崔俞崧
+        11813225 王宇辰
+GitHub: https://github.com/XDZhelheim/CS305_Project_RDT
+'''
+
 from USocket import UnreliableSocket
 import threading
 import time
