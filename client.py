@@ -17,7 +17,6 @@ if __name__=='__main__':
         data = f.read()
         encoded = data.encode()
         assert len(data)==len(encoded)
-        encoded = b'hello'
 
     '''
     check if your rdt pass either of the two
