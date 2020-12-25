@@ -21,7 +21,7 @@ def corrupt(data: bytes) -> bytes:
 class Server(ThreadingUDPServer):
     def __init__(self, addr, rate=None, delay=None, corrupt=None):
         super().__init__(addr, None)
-        self.rate = rate            
+        self.rate = rate
         self.buffer = 0
         self.delay = delay
         self.corrupt = corrupt
@@ -43,7 +43,7 @@ class Server(ThreadingUDPServer):
         to = bytes_to_addr(data[:8])
         # print(client_address, to)
         socket.sendto(addr_to_bytes(client_address) + data[8:], to)
-    
+
 server_address = ('127.0.0.1', 12345)
 
 if __name__=='__main__':

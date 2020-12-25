@@ -1,5 +1,4 @@
 import struct
-from fractions import Fraction
 
 a=bytearray(struct.pack("!???IIIH", True, False, True, 4294967295, 4294967295, 4294967295, 6667))
 s="test message".encode()
@@ -18,8 +17,3 @@ print(b)
 # print(type(b[6]))
 msg=a[17:].decode()
 print(msg)
-
-temp=1
-for i in range(3):
-    temp+=Fraction(1, 3)
-print(temp)

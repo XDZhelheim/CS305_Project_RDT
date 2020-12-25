@@ -13,10 +13,11 @@ if __name__=='__main__':
     slice_size = 2048
     blocking_send = True
 
-    with open('D:/Codes/PythonWorkspace/ComputerNetwork_Lab/CS305_Project_RDT/alice.txt', 'r') as f:
+    with open('alice.txt', 'r') as f:
         data = f.read()
         encoded = data.encode()
         assert len(data)==len(encoded)
+        encoded = b'hello'
 
     '''
     check if your rdt pass either of the two

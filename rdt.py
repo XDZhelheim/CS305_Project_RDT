@@ -22,6 +22,10 @@ temp=0
 num_of_segments=0
 flags=[]
 timers=[]
+connect_seq_num = 0
+judge_con1 = False
+
+judge_con2 = False
 
 class RDTSocket(UnreliableSocket):
     """
@@ -80,11 +84,14 @@ class RDTSocket(UnreliableSocket):
 
         recieve syn, send synack, recieve ack
         """
+        global judge_con1
+
 
         conn, addr=RDTSocket(self._rate), None
 
         while True:
             # recieve syn
+
             data, addr=self.recvfrom(4096)
             segment=Segment.decode(data)
 
@@ -93,15 +100,20 @@ class RDTSocket(UnreliableSocket):
                 conn.sendto(Segment.synack_handshake().encode(), addr)
 
                 # recieve ack
-                data, addr2=conn.recvfrom(4096) # recvfrom 是阻塞的，会一直在这等着直到收到消息
-                segment=Segment.decode(data)
-                if addr==addr2 and segment.is_ack_handshake():
-                    conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
+                threading.Thread(target=self.judge1,args=(conn,addr)).start()
 
-                    if DEBUG:
-                        print("Accept OK")
+                if(judge_con1):
+                    break
 
-                    return conn, addr
+                # data, addr2=conn.recvfrom(4096) # recvfrom 是阻塞的，会一直在这等着直到收到消息
+                # segment=Segment.decode(data)
+                # if addr==addr2 and segment.is_ack_handshake():
+                #     conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
+                #
+                #     if DEBUG:
+                #         print("Accept OK")
+                #
+                #     return conn, addr
             #     else:
             #         continue
             # else:
@@ -110,34 +122,68 @@ class RDTSocket(UnreliableSocket):
 
         return conn, addr
 
+
+    def judge1(self,conn,addr):
+        global judge_con1
+        data, addr2 = conn.recvfrom(4096)  # recvfrom 是阻塞的，会一直在这等着直到收到消息
+        segment = Segment.decode(data)
+        if addr == addr2 and segment.is_ack_handshake():
+            conn.set_connect_addr(addr)  # 连上了，以后就收 addr 发的消息
+            if DEBUG:
+                print("Accept OK")
+            judge_con1 = True
+
+
     def connect(self, addr:(str, int)):
+        global connect_seq_num,judge_con2
         """
         Connect to a remote socket at address.
         Corresponds to the process of establishing a connection on the client side.
 
         send syn, recieve synack, send ack
         """
+        self.sendto(Segment.syn_handshake().encode(), addr)
+
+        threading.Thread(target=self.judge2).start()
 
         while True:
             # send syn
+
+            if(judge_con2):
+                break
+
             self.sendto(Segment.syn_handshake().encode(), addr)
 
             # recieve synack
-            data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
-            segment=Segment.decode(data)
-
-            # send ack
-            if segment.is_synack_handshake():
-                self.sendto(Segment.ack_handshake().encode(), addr2)
-                self.set_connect_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
-
-                break
+            # data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
+            # segment=Segment.decode(data)
+            #
+            # # send ack
+            # if segment.is_synack_handshake():
+            #     self.sendto(Segment.ack_handshake().encode(), addr2)
+            #     self.set_connect_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
+            #
+            #     break
             # else:
             #     time.sleep(0.01)
             #     continue
 
         if DEBUG:
             print("Connect OK")
+
+    def judge2(self):
+        global judge_con2
+        data, addr2 = self.recvfrom(4096)  # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
+        segment = Segment.decode(data)
+
+        # send ack
+        if segment.is_synack_handshake():
+            self.sendto(Segment.ack_handshake().encode(), addr2)
+            self.set_connect_addr(addr2)  # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
+            judge_con2 = True
+
+
+
 
     '''
     选择重传 SR
