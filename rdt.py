@@ -224,7 +224,7 @@ class RDTSocket(UnreliableSocket):
             all_segments.append(segment)
         # flags 数组用来标记包的状态: 0-还没发，1-已经收到 ack 可以不用管了，2-发了，还在等 ack
         flags=[0]*num_of_segments # 初始化为全 0
-        timers=[Timer(i) for i in range(num_of_segments)] # 每个 segment 给一个 timer，timer 的 timer_id 等于他的下标
+        timers=[Timer() for i in range(num_of_segments)] # 每个 segment 给一个 timer
 
         threading.Thread(target=self.recv_ack).start()
 
@@ -302,19 +302,18 @@ class RDTSocket(UnreliableSocket):
 
         while True:
             if timers[timer_index].closed:
-                print("Timer "+str(timers[timer_index].timer_id)+" closed")
+                if DEBUG:
+                    print("Timer "+str(timer_index)+" closed")
                 break
             try:
                 timers[timer_index].start(self.TIMEOUT_VALUE)
-                print("Timer "+str(timers[timer_index].timer_id)+" started")
-            except TimeoutException as e:
-                # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
-                resend_index=e.timer_id # 这个下标就是我要重传的包的下标
+                if DEBUG:
+                    print("Timer "+str(timer_index)+" started")
+            except TimeoutException:
+                resend_index=timer_index # 这个下标就是我要重传的包的下标
                 if DEBUG:
                     print("Segment "+str(resend_index)+" timeout")
                 self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
-                # timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
-                # threading.Thread(target=timers[resend_index].start, args=(self.TIMEOUT_VALUE,)).start()
                 # 拥塞控制，发送窗口大小=1，重设阈值
                 self.SSTHRESH=send_window_size/2
                 self.threadLock.acquire()
@@ -528,8 +527,7 @@ class Segment:
         return not self.syn and not self.fin and not self.ack and self.seq_num==self.MAX_NUM and self.length==0
 
 class Timer:
-    def __init__(self, timer_id):
-        self.timer_id=timer_id
+    def __init__(self):
         self.closed=False
     
     def start(self, timeout_value):
@@ -539,9 +537,8 @@ class Timer:
                 break
             end=time.time()
             if end-start>timeout_value:
-                raise TimeoutException(self.timer_id)
+                raise TimeoutException()
 
 class TimeoutException(Exception):
-    def __init__(self, timer_id):
+    def __init__(self):
         super().__init__()
-        self.timer_id=timer_id
