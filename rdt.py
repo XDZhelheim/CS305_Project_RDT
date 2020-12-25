@@ -14,6 +14,14 @@ import math
 from fractions import Fraction
 
 DEBUG=True
+all_segments=[]
+send_window_size=1
+send_base=0
+next_seq_num=0
+temp=0
+num_of_segments=0
+flags=[]
+timers=[]
 
 class RDTSocket(UnreliableSocket):
     """
@@ -141,8 +149,9 @@ class RDTSocket(UnreliableSocket):
     现在已经没有什么 ack=seq+length 了，那个是 TCP 的玩法
     '''
 
-    TIMEOUT_VALUE=0.01 # 0.01s 认为超时
+    TIMEOUT_VALUE=0.1 # 0.01s 认为超时
     SSTHRESH=8 # 慢启动阈值
+    threadLock=threading.Lock()
 
     def send(self, data:bytes):
         """
@@ -151,7 +160,7 @@ class RDTSocket(UnreliableSocket):
         """
         assert self._connect_addr, "Connection not established yet. Use sendto instead."
 
-        # TODO: 多线程: 三个线程：发包，收 ack，timers
+        global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
 
         # 初始化发送窗口
         all_segments=[]
@@ -171,54 +180,68 @@ class RDTSocket(UnreliableSocket):
         flags=[0]*num_of_segments # 初始化为全 0
         timers=[Timer(i) for i in range(num_of_segments)] # 每个 segment 给一个 timer，timer 的 timer_id 等于他的下标
 
+        threading.Thread(target=self.recv_ack).start()
+
+        all_segments[0].length=1234567 # 模拟错包
+
         # SR
         # self.setblocking(False) # 取消阻塞，否则发完第一个包会一直处于等待 ack 的状态
         while True:
-            try:
-                if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
-                    self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
-                    # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行，每个 timer 一个线程
-                    flags[next_seq_num]=2
-                    next_seq_num+=1
+            # try:
+            if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
+                self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
+                # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行，每个 timer 一个线程
+                # threading.Thread(target=timers[next_seq_num].start, args=(self.TIMEOUT_VALUE,)).start()
+                threading.Thread(target=self.start_timer).start()
+                flags[next_seq_num]=2
+                next_seq_num+=1
 
-                data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
+                # data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
 
-                segment_recieved=Segment.decode(data)
-                if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
-                    continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
-                elif not segment_recieved.is_ack():
-                    continue # 收到的不是 ack，丢掉不管
-                elif flags[segment_recieved.ack_num]==1:
-                    continue # 收到的 ack 是已经 ack 过的，丢掉不管
-                elif flags[segment_recieved.ack_num]==0:
-                    continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
+                # segment_recieved=Segment.decode(data)
+                # if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
+                #     continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
+                # elif not segment_recieved.is_ack():
+                #     continue # 收到的不是 ack，丢掉不管
+                # elif flags[segment_recieved.ack_num]==1:
+                #     continue # 收到的 ack 是已经 ack 过的，丢掉不管
+                # elif flags[segment_recieved.ack_num]==0:
+                #     continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
 
-                # 以下为正常接收 ack 之后
-                flags[segment_recieved.ack_num]=1
-                timers[segment_recieved.ack_num].closed=True # 关闭 timer
+                # # 以下为正常接收 ack 之后
+                # flags[segment_recieved.ack_num]=1
+                # timers[segment_recieved.ack_num].closed=True # 关闭 timer
 
-                # 发送窗口变大
-                if send_window_size<self.SSTHRESH:
-                    send_window_size+=1 # 指数增长阶段
-                else:
-                    temp+=Fraction(1, send_window_size)
-                    if temp==1:
-                        send_window_size+=1
-                        temp=0
+                # # 发送窗口变大
+                # if send_window_size<self.SSTHRESH:
+                #     send_window_size+=1 # 指数增长阶段
+                # else:
+                #     temp+=Fraction(1, send_window_size)
+                #     if temp==1:
+                #         send_window_size+=1
+                #         temp=0
 
-                while send_base<num_of_segments and flags[send_base]==1:
-                    send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
-                if send_base>=num_of_segments:
-                    break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
+                # while send_base<num_of_segments and flags[send_base]==1:
+                #     send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
+                # if send_base>=num_of_segments:
+                #     break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
 
-            except TimeoutException as e: # 捕获到有包超时
-                # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
-                resend_index=e.timer_id # 这个下标就是我要重传的包的下标
-                self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
-                timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
-                # 拥塞控制，发送窗口大小=1，重设阈值
-                self.SSTHRESH=send_window_size/2
-                send_window_size=1
+            if send_base>=num_of_segments:
+                break
+
+            # except TimeoutException as e: # 捕获到有包超时
+            #     # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
+            #     resend_index=e.timer_id # 这个下标就是我要重传的包的下标
+            #     if DEBUG:
+            #         print("Segment "+str(resend_index)+" timeout")
+            #     self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
+            #     # timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
+            #     threading.Thread(target=timers[resend_index].start, args=(self.TIMEOUT_VALUE,)).start()
+            #     # 拥塞控制，发送窗口大小=1，重设阈值
+            #     self.SSTHRESH=send_window_size/2
+            #     self.threadLock.acquire()
+            #     send_window_size=1
+            #     self.threadLock.release()
         
         # 发个 fin 告诉你我发完了，你那边可以停止接收了
         start=time.time()
@@ -233,6 +256,67 @@ class RDTSocket(UnreliableSocket):
                 continue
             if data:
                 break # 也别管收到的 ack 有没有错了，收到东西就证明对面收到我的 fin 了，停止发送
+
+    def recv_ack(self):
+        global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
+
+        while True:
+            data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
+
+            segment_recieved=Segment.decode(data)
+            if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
+                continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
+            elif not segment_recieved.is_ack():
+                continue # 收到的不是 ack，丢掉不管
+            elif flags[segment_recieved.ack_num]==1:
+                continue # 收到的 ack 是已经 ack 过的，丢掉不管
+            elif flags[segment_recieved.ack_num]==0:
+                continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
+
+            # 以下为正常接收 ack 之后
+            flags[segment_recieved.ack_num]=1
+            timers[segment_recieved.ack_num].closed=True # 关闭 timer
+
+            # 发送窗口变大
+            if send_window_size<self.SSTHRESH:
+                self.threadLock.acquire()
+                send_window_size+=1 # 指数增长阶段
+                self.threadLock.release()
+            else:
+                temp+=Fraction(1, send_window_size)
+                if temp==1:
+                    send_window_size+=1
+                    temp=0
+
+            while send_base<num_of_segments and flags[send_base]==1:
+                send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
+            if send_base>=num_of_segments:
+                break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
+
+    def start_timer(self):
+        global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
+        timer_index=next_seq_num
+
+        while True:
+            if timers[timer_index].closed:
+                print("Timer "+str(timers[timer_index].timer_id)+" closed")
+                break
+            try:
+                timers[timer_index].start(self.TIMEOUT_VALUE)
+                print("Timer "+str(timers[timer_index].timer_id)+" started")
+            except TimeoutException as e:
+                # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
+                resend_index=e.timer_id # 这个下标就是我要重传的包的下标
+                if DEBUG:
+                    print("Segment "+str(resend_index)+" timeout")
+                self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
+                # timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
+                # threading.Thread(target=timers[resend_index].start, args=(self.TIMEOUT_VALUE,)).start()
+                # 拥塞控制，发送窗口大小=1，重设阈值
+                self.SSTHRESH=send_window_size/2
+                self.threadLock.acquire()
+                send_window_size=1
+                self.threadLock.release()
             
     def recv(self, bufsize) -> bytes:
         """
@@ -267,6 +351,8 @@ class RDTSocket(UnreliableSocket):
 
             if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
                 continue # 收到坏包，直接丢弃，等对面超时重发
+            # elif segment_recieved.length==1234567: # 模拟错包
+            #     continue
             elif segment_recieved.is_fin_handshake():
                 self.sendto(Segment.ack_handshake().encode(), self._connect_addr) # 收到 fin，停止接收
                 break
@@ -446,10 +532,10 @@ class Timer:
     def start(self, timeout_value):
         start=time.time()
         while True:
-            if (self.closed):
+            if self.closed:
                 break
             end=time.time()
-            if (end-start>timeout_value):
+            if end-start>timeout_value:
                 raise TimeoutException(self.timer_id)
 
 class TimeoutException(Exception):
