@@ -149,7 +149,7 @@ class RDTSocket(UnreliableSocket):
     现在已经没有什么 ack=seq+length 了，那个是 TCP 的玩法
     '''
 
-    TIMEOUT_VALUE=0.1 # 0.01s 认为超时
+    TIMEOUT_VALUE=0.1 # 0.1s 认为超时
     SSTHRESH=8 # 慢启动阈值
     threadLock=threading.Lock()
 
@@ -182,67 +182,20 @@ class RDTSocket(UnreliableSocket):
 
         threading.Thread(target=self.recv_ack).start()
 
-        all_segments[0].length=1234567 # 模拟错包
+        # all_segments[0].length=1234567 # 模拟错包
 
         # SR
-        # self.setblocking(False) # 取消阻塞，否则发完第一个包会一直处于等待 ack 的状态
         while True:
             # try:
             if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
                 self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
-                # timers[next_seq_num].start(self.TIMEOUT_VALUE) # 启动这个包的 timer，这里也要多线程，要不然不会往下执行，每个 timer 一个线程
-                # threading.Thread(target=timers[next_seq_num].start, args=(self.TIMEOUT_VALUE,)).start()
                 threading.Thread(target=self.start_timer).start()
                 flags[next_seq_num]=2
                 next_seq_num+=1
 
-                # data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
-
-                # segment_recieved=Segment.decode(data)
-                # if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
-                #     continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
-                # elif not segment_recieved.is_ack():
-                #     continue # 收到的不是 ack，丢掉不管
-                # elif flags[segment_recieved.ack_num]==1:
-                #     continue # 收到的 ack 是已经 ack 过的，丢掉不管
-                # elif flags[segment_recieved.ack_num]==0:
-                #     continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
-
-                # # 以下为正常接收 ack 之后
-                # flags[segment_recieved.ack_num]=1
-                # timers[segment_recieved.ack_num].closed=True # 关闭 timer
-
-                # # 发送窗口变大
-                # if send_window_size<self.SSTHRESH:
-                #     send_window_size+=1 # 指数增长阶段
-                # else:
-                #     temp+=Fraction(1, send_window_size)
-                #     if temp==1:
-                #         send_window_size+=1
-                #         temp=0
-
-                # while send_base<num_of_segments and flags[send_base]==1:
-                #     send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
-                # if send_base>=num_of_segments:
-                #     break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
-
             if send_base>=num_of_segments:
                 break
 
-            # except TimeoutException as e: # 捕获到有包超时
-            #     # 这里 e.timer_id 对应的就是检测到超时的 timer 的 id，对应的就是 timers 里的下标，对应的就是 all_segments 里的下标
-            #     resend_index=e.timer_id # 这个下标就是我要重传的包的下标
-            #     if DEBUG:
-            #         print("Segment "+str(resend_index)+" timeout")
-            #     self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
-            #     # timers[resend_index].start(self.TIMEOUT_VALUE) # 重启这个包的 timer
-            #     threading.Thread(target=timers[resend_index].start, args=(self.TIMEOUT_VALUE,)).start()
-            #     # 拥塞控制，发送窗口大小=1，重设阈值
-            #     self.SSTHRESH=send_window_size/2
-            #     self.threadLock.acquire()
-            #     send_window_size=1
-            #     self.threadLock.release()
-        
         # 发个 fin 告诉你我发完了，你那边可以停止接收了
         start=time.time()
         while True:
@@ -295,6 +248,10 @@ class RDTSocket(UnreliableSocket):
 
     def start_timer(self):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
+        
+        if next_seq_num>=num_of_segments:
+            return
+
         timer_index=next_seq_num
 
         while True:
@@ -335,7 +292,7 @@ class RDTSocket(UnreliableSocket):
         recv_base=0
 
         # 不知道对面一共要发几个包，接收窗口只能设成最大长度了
-        max_num_of_recieved_segments=math.floor(bufsize/Segment.MAX_SEGMENT_SIZE)
+        max_num_of_recieved_segments=math.ceil(bufsize/Segment.MAX_PAYLOAD_SIZE) # ceil 还是 floor?
         recv_window=[None]*max_num_of_recieved_segments
 
         # 接收窗口收到了连续的包之后，就 extend 到 all_payloads，最后接收完了之后 return bytes(all_recieved_payloads)，这就是发送方发的所有有效载荷
