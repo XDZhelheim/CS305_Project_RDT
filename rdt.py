@@ -22,10 +22,6 @@ temp=0
 num_of_segments=0
 flags=[]
 timers=[]
-connect_seq_num = 0
-judge_con1 = False
-
-judge_con2 = False
 
 class RDTSocket(UnreliableSocket):
     """
@@ -73,117 +69,98 @@ class RDTSocket(UnreliableSocket):
         所以当 client 发完数据的时候，他 close() 只是关掉了和 conn 之间的连接，不会影响 server
         还有，server 可以单独 close()，同样不会影响各个已经存在的 conn，只是不能再接受新 client 了
     '''
+
     def accept(self)->('RDTSocket', (str, int)):
         """
         Accept a connection. The socket must be bound to an address and listening for 
         connections. The return value is a pair (conn, address) where conn is a new 
         socket object usable to send and receive data on the connection, and address 
         is the address bound to the socket on the other end of the connection.
-
         This function should be blocking. 
-
         recieve syn, send synack, recieve ack
         """
-        global judge_con1
-
 
         conn, addr=RDTSocket(self._rate), None
+        conn.bind(('127.0.0.1', 0)) # 0 表示随机分配端口
 
+        # start_time=time.time()
         while True:
-            # recieve syn
+            # end_time=time.time()
+            # if end_time-start_time>2:
+            #     raise TimeoutException()
+            # 发回去的 synack 可能丢包，这时候 client 会继续发 syn 过来，所以需要一段时间继续监听
 
+            # recieve syn
             data, addr=self.recvfrom(4096)
             segment=Segment.decode(data)
+            if segment.checksum!=Segment.calculate_checksum(segment):
+                continue
 
             # then send synack
             if segment.is_syn_handshake():
                 conn.sendto(Segment.synack_handshake().encode(), addr)
+                conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
+                break
 
-                # recieve ack
-                threading.Thread(target=self.judge1,args=(conn,addr)).start()
-
-                if(judge_con1):
-                    break
-
+                # # recieve ack
                 # data, addr2=conn.recvfrom(4096) # recvfrom 是阻塞的，会一直在这等着直到收到消息
                 # segment=Segment.decode(data)
                 # if addr==addr2 and segment.is_ack_handshake():
                 #     conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
-                #
+
                 #     if DEBUG:
                 #         print("Accept OK")
-                #
+
                 #     return conn, addr
-            #     else:
-            #         continue
-            # else:
-            #     time.sleep(0.01)
-            #     continue
+        if DEBUG:
+            print("Accept OK")
 
         return conn, addr
 
-
-    def judge1(self,conn,addr):
-        global judge_con1
-        data, addr2 = conn.recvfrom(4096)  # recvfrom 是阻塞的，会一直在这等着直到收到消息
-        segment = Segment.decode(data)
-        if addr == addr2 and segment.is_ack_handshake():
-            conn.set_connect_addr(addr)  # 连上了，以后就收 addr 发的消息
-            if DEBUG:
-                print("Accept OK")
-            judge_con1 = True
-
-
+    flag=False
     def connect(self, addr:(str, int)):
-        global connect_seq_num,judge_con2
         """
         Connect to a remote socket at address.
         Corresponds to the process of establishing a connection on the client side.
-
         send syn, recieve synack, send ack
         """
-        self.sendto(Segment.syn_handshake().encode(), addr)
+        self.flag=False
+        self.bind(('127.0.0.1', 0))
 
-        threading.Thread(target=self.judge2).start()
+        threading.Thread(target=self.recv_synack).start()
 
         while True:
             # send syn
-
-            if(judge_con2):
-                break
-
             self.sendto(Segment.syn_handshake().encode(), addr)
 
-            # recieve synack
+            if self.flag:
+                break
+
+            # # recieve synack
             # data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
             # segment=Segment.decode(data)
-            #
+
             # # send ack
             # if segment.is_synack_handshake():
             #     self.sendto(Segment.ack_handshake().encode(), addr2)
             #     self.set_connect_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
-            #
+
             #     break
-            # else:
-            #     time.sleep(0.01)
-            #     continue
 
         if DEBUG:
             print("Connect OK")
 
-    def judge2(self):
-        global judge_con2
-        data, addr2 = self.recvfrom(4096)  # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
-        segment = Segment.decode(data)
-
-        # send ack
-        if segment.is_synack_handshake():
-            self.sendto(Segment.ack_handshake().encode(), addr2)
-            self.set_connect_addr(addr2)  # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
-            judge_con2 = True
-
-
-
+    def recv_synack(self):
+        # recieve synack
+        while True:
+            data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
+            segment=Segment.decode(data)
+            if segment.checksum!=Segment.calculate_checksum(segment):
+                continue
+            if segment.is_synack_handshake():
+                self.set_connect_addr(addr2)
+                self.flag=True
+                break
 
     '''
     选择重传 SR
@@ -260,7 +237,7 @@ class RDTSocket(UnreliableSocket):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
 
         while True:
-            data, addr=self.recvfrom(4096) # BlockingIOError: [WinError 10035] 无法立即完成一个非阻止性套接字操作
+            data, addr=self.recvfrom(4096)
 
             segment_recieved=Segment.decode(data)
             if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
@@ -346,14 +323,17 @@ class RDTSocket(UnreliableSocket):
         while True:
             # 只收来自 _connect_addr 的消息  
             data, addr=self.recvfrom(bufsize)
-            if addr!=self._connect_addr:
-                continue
+            # if addr!=self._connect_addr:
+            #     continue
 
             segment_recieved=Segment.decode(data)
 
             if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
                 continue # 收到坏包，直接丢弃，等对面超时重发
             # elif segment_recieved.length==1234567: # 模拟错包
+            #     continue
+            # elif segment_recieved.is_syn_handshake():
+            #     self.sendto(Segment.synack_handshake().encode(), self._connect_addr)
             #     continue
             elif segment_recieved.is_fin_handshake():
                 self.sendto(Segment.ack_handshake().encode(), self._connect_addr) # 收到 fin，停止接收
