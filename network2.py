@@ -42,7 +42,7 @@ class Server(ThreadingUDPServer):
             if self.rate: time.sleep(len(data)/self.rate)
             self.buffer -= len(data)
             if random.random() < loss_rate:
-                return 
+                return
             # for i in range(len(data)-1):
             #     if random.random() < corrupt_rate:
             #         data[i] = data[:i] + (data[i]+1).to_bytes(1,'big') + data[i+1:]
