@@ -47,9 +47,6 @@ class RDTSocket(UnreliableSocket):
         self._connect_addr = None
         DEBUG = debug
 
-        # self.next_seq_num=None
-        # self.next_ack_num=None
-
     '''
     connect+accept 是握手
 
@@ -129,7 +126,6 @@ class RDTSocket(UnreliableSocket):
         return conn, addr
 
     flag = False  # 这个 flag 只在 connect() 和 recv_synack_handshake() 和最后的 fin 里用
-
     def connect(self, addr: (str, int)):
         """
         Connect to a remote socket at address.
@@ -208,24 +204,21 @@ class RDTSocket(UnreliableSocket):
         flags = [0] * num_of_segments  # 初始化为全 0
         timers = [Timer() for i in range(num_of_segments)]  # 每个 segment 给一个 timer
 
-        threading.Thread(target=self.recv_ack).start()
-
-        # all_segments[0].length=1234567 # 模拟错包
+        threading.Thread(target=self.recv_ack).start() # 开一个线程收 ack
 
         # SR
         while True:
             # try:
-            if next_seq_num < num_of_segments and flags[
-                next_seq_num] == 0 and next_seq_num < send_base + send_window_size:
+            if next_seq_num < num_of_segments and flags[next_seq_num] == 0 and next_seq_num < send_base + send_window_size:
                 self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
-                threading.Thread(target=self.start_timer).start()
+                threading.Thread(target=self.start_timer).start() # 发包之后启动这个包的 timer
                 flags[next_seq_num] = 2
                 next_seq_num += 1
 
             if send_base >= num_of_segments:
                 break
 
-        self.send_fin_handshake()
+        self.send_fin_handshake() # 发 fin，结束发送
 
     def recv_ack(self):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
@@ -250,10 +243,10 @@ class RDTSocket(UnreliableSocket):
             flags[segment_received.ack_num] = 1
             timers[segment_received.ack_num].closed = True  # 关闭 timer
 
-            # 发送窗口变大
+            # 发送窗口变大: 慢启动+拥塞避免
             if send_window_size < self.SSTHRESH:
                 self.threadLock.acquire()
-                send_window_size += 1  # 指数增长阶段
+                send_window_size += 1  # 指数增长阶段: 每 RTT 窗口大小*2，所以每次收到 1 个 ack，窗口大小+1
                 self.threadLock.release()
             else:
                 temp += Fraction(1, send_window_size)
@@ -272,7 +265,7 @@ class RDTSocket(UnreliableSocket):
         if next_seq_num >= num_of_segments:
             return
 
-        timer_index = next_seq_num
+        timer_index = next_seq_num # timer 的下标
 
         while True:
             if timers[timer_index].closed:
@@ -383,7 +376,7 @@ class RDTSocket(UnreliableSocket):
                 max_num_of_received_segments+=math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
 
             recv_window[segment_received.seq_num] = segment_received
-            while recv_base < max_num_of_received_segments and recv_window[recv_base]:
+            while recv_base < max_num_of_received_segments and recv_window[recv_base]: # 交付数据，滑动窗口
                 all_received_payloads.extend(recv_window[recv_base].payload)
                 recv_base += 1
 
@@ -444,14 +437,14 @@ class Segment:
     """
     field       length          range               type
     --------------------------------------------------------------
-    checksum:   2 byte=16 bit   0 ~ 65535           unsigned short
-    syn:        1 byte          0 ~ 1               bool
-    fin:        1 byte          0 ~ 1               bool
-    ack:        1 byte          0 ~ 1               bool
-    seq_num:    4 byte=32 bit   0 ~ 4294967295      unsigned int
-    ack_num:    4 byte=32 bit   0 ~ 4294967295      unsigned int
-    length:     4 byte=32 bit   0 ~ 4294967295      unsigned int
-    payload:    0 ~ length byte -                   bytes
+    checksum   2 byte=16 bit   0 ~ 65535           unsigned short
+    syn        1 byte          0 ~ 1               bool
+    fin        1 byte          0 ~ 1               bool
+    ack        1 byte          0 ~ 1               bool
+    seq_num    4 byte=32 bit   0 ~ 4294967295      unsigned int
+    ack_num    4 byte=32 bit   0 ~ 4294967295      unsigned int
+    length     4 byte=32 bit   0 ~ 4294967295      unsigned int
+    payload    0 ~ length byte -                   bytes
     """
 
     MAX_NUM = 4294967295  # 2^32-1 (32位无符号)
@@ -494,7 +487,7 @@ class Segment:
         # checksum 要放第一位，否则检查 checksum 的时候会错开 1 位，因为 header 的总长度是奇数
         data = bytearray(struct.pack("!H???III", self.checksum, self.syn, self.fin, self.ack, self.seq_num, self.ack_num, self.length))
         # 现在 header 封装完毕，header 长度为 17 byte (2+1+1+1+4+4+4)
-        # XXX: 前三个 bit 其实用一个 byte 表示就够了, header 长度减小到 15 byte
+        # XXX: 三个 bit 其实用一个 byte 表示就够了, header 长度减小到 15 byte
 
         if self.payload:
             data.extend(self.payload)  # 在后面加上数据
