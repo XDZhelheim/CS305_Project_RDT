@@ -1,10 +1,10 @@
-'''
+"""
 Reliable Data Transfer Socket
 Author: 11812804 董正
         11811305 崔俞崧
         11813225 王宇辰
 GitHub: https://github.com/XDZhelheim/CS305_Project_RDT
-'''
+"""
 
 from USocket import UnreliableSocket
 import threading
@@ -13,15 +13,16 @@ import struct
 import math
 from fractions import Fraction
 
-DEBUG=True
-all_segments=[]
-send_window_size=1
-send_base=0
-next_seq_num=0
-temp=0
-num_of_segments=0
-flags=[]
-timers=[]
+DEBUG = True
+all_segments = []
+send_window_size = 1
+send_base = 0
+next_seq_num = 0
+temp = 0
+num_of_segments = 0
+flags = []
+timers = []
+
 
 class RDTSocket(UnreliableSocket):
     """
@@ -40,9 +41,9 @@ class RDTSocket(UnreliableSocket):
 
     def __init__(self, rate=None, debug=True):
         super().__init__(rate=rate)
-        self._rate= rate
-        self._connect_addr=None
-        DEBUG=debug
+        self._rate = rate
+        self._connect_addr = None
+        DEBUG = debug
 
         # self.next_seq_num=None
         # self.next_ack_num=None
@@ -70,65 +71,66 @@ class RDTSocket(UnreliableSocket):
         还有，server 可以单独 close()，同样不会影响各个已经存在的 conn，只是不能再接受新 client 了
     '''
 
-    def accept(self)->('RDTSocket', (str, int)):
+    def accept(self) -> ('RDTSocket', (str, int)):
         """
         Accept a connection. The socket must be bound to an address and listening for 
         connections. The return value is a pair (conn, address) where conn is a new 
         socket object usable to send and receive data on the connection, and address 
         is the address bound to the socket on the other end of the connection.
         This function should be blocking. 
-        recieve syn, send synack, recieve ack
+        receive syn, send synack, receive ack
         """
 
-        conn, addr=RDTSocket(self._rate), None
-        conn.bind(('127.0.0.1', 0)) # 0 表示随机分配端口
+        conn, addr = RDTSocket(self._rate), None
+        conn.bind(('127.0.0.1', 0))  # 0 表示随机分配端口
 
-        data, addr=None, None
-        flag=False # 要从第一次收到包开始计时，用来标记是否收到第一个包。如果一上来就开始计时那运行到 end_time 那一行之后肯定就超时退出了
+        data, addr = None, None
+        flag = False  # 要从第一次收到包开始计时，用来标记是否收到第一个包。如果一上来就开始计时那运行到 end_time 那一行之后肯定就超时退出了
         while True:
             # 发回去的 synack 可能丢包，这时候 client 会继续发 syn 过来，所以需要一段时间继续监听
 
             if data and addr:
                 self.setblocking(False)
                 if flag:
-                    start_time=time.time()
-                    flag=False
-                end_time=time.time()
-                if end_time-start_time>1: # 等待这个时间之后就结束
+                    start_time = time.time()
+                    flag = False
+                end_time = time.time()
+                if end_time - start_time > 1:  # 等待这个时间之后就结束
                     self.setblocking(True)
                     break
 
-            # recieve syn
+            # receive syn
             try:
-                data, addr=self.recvfrom(4096)
+                data, addr = self.recvfrom(4096)
             except BlockingIOError:
                 continue
 
             if not flag:
-                flag=True
+                flag = True
 
-            segment=Segment.decode(data)
-            if segment.checksum!=Segment.calculate_checksum(segment):
+            segment = Segment.decode(data)
+            if segment.checksum != Segment.calculate_checksum(segment):
                 continue
 
             # then send synack
             if segment.is_syn_handshake():
                 conn.sendto(Segment.synack_handshake().encode(), addr)
-                conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
+                conn.set_connect_addr(addr)  # 连上了，以后就收 addr 发的消息
 
         if DEBUG:
             print("Accept OK")
 
         return conn, addr
 
-    flag=False # 这个 flag 只在 connect() 和 recv_synack_handshake() 和最后的 fin 里用
-    def connect(self, addr:(str, int)):
+    flag = False  # 这个 flag 只在 connect() 和 recv_synack_handshake() 和最后的 fin 里用
+
+    def connect(self, addr: (str, int)):
         """
         Connect to a remote socket at address.
         Corresponds to the process of establishing a connection on the client side.
-        send syn, recieve synack, send ack
+        send syn, receive synack, send ack
         """
-        self.flag=False
+        self.flag = False
         self.bind(('127.0.0.1', 0))
 
         threading.Thread(target=self.recv_synack_handshake).start()
@@ -146,15 +148,15 @@ class RDTSocket(UnreliableSocket):
             print("Connect OK")
 
     def recv_synack_handshake(self):
-        # recieve synack
+        # receive synack
         while True:
-            data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
-            segment=Segment.decode(data)
-            if segment.checksum!=Segment.calculate_checksum(segment):
+            data, addr2 = self.recvfrom(4096)  # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
+            segment = Segment.decode(data)
+            if segment.checksum != Segment.calculate_checksum(segment):
                 continue
             if segment.is_synack_handshake():
                 self.set_connect_addr(addr2)
-                self.flag=True
+                self.flag = True
                 break
 
     '''
@@ -167,11 +169,11 @@ class RDTSocket(UnreliableSocket):
     现在已经没有什么 ack=seq+length 了，那个是 TCP 的玩法
     '''
 
-    TIMEOUT_VALUE=0.1 # 0.1s 认为超时
-    SSTHRESH=8 # 慢启动阈值
-    threadLock=threading.Lock()
+    TIMEOUT_VALUE = 0.1  # 0.1s 认为超时
+    SSTHRESH = 8  # 慢启动阈值
+    threadLock = threading.Lock()
 
-    def send(self, data:bytes):
+    def send(self, data: bytes):
         """
         Send data to the socket. 
         The socket must be connected to a remote socket, i.e. self._send_to_addr must not be none.
@@ -181,22 +183,22 @@ class RDTSocket(UnreliableSocket):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
 
         # 初始化发送窗口
-        all_segments=[]
-        send_window_size=1
-        send_base=0
-        next_seq_num=0
-        temp=0 # 这个变量只在拥塞控制的时候用
+        all_segments = []
+        send_window_size = 1
+        send_base = 0
+        next_seq_num = 0
+        temp = 0  # 这个变量只在拥塞控制的时候用
 
         # 分段
-        num_of_segments=math.ceil(len(data)/Segment.MAX_PAYLOAD_SIZE) # num_of_segments 等于 len(all_segments)
+        num_of_segments = math.ceil(len(data) / Segment.MAX_PAYLOAD_SIZE)  # num_of_segments 等于 len(all_segments)
         for i in range(num_of_segments):
-            j=i*Segment.MAX_PAYLOAD_SIZE
-            payload=data[j:j+Segment.MAX_PAYLOAD_SIZE] # 上限超长的话 python 会自动取到最后一位就停，不会报 IndexOutOfBound
-            segment=Segment(seq_num=i, length=len(payload), payload=payload)
+            j = i * Segment.MAX_PAYLOAD_SIZE
+            payload = data[j:j + Segment.MAX_PAYLOAD_SIZE]  # 上限超长的话 python 会自动取到最后一位就停，不会报 IndexOutOfBound
+            segment = Segment(seq_num=i, length=len(payload), payload=payload)
             all_segments.append(segment)
         # flags 数组用来标记包的状态: 0-还没发，1-已经收到 ack 可以不用管了，2-发了，还在等 ack
-        flags=[0]*num_of_segments # 初始化为全 0
-        timers=[Timer() for i in range(num_of_segments)] # 每个 segment 给一个 timer
+        flags = [0] * num_of_segments  # 初始化为全 0
+        timers = [Timer() for i in range(num_of_segments)]  # 每个 segment 给一个 timer
 
         threading.Thread(target=self.recv_ack).start()
 
@@ -205,13 +207,14 @@ class RDTSocket(UnreliableSocket):
         # SR
         while True:
             # try:
-            if next_seq_num<num_of_segments and flags[next_seq_num]==0 and next_seq_num<send_base+send_window_size:
+            if next_seq_num < num_of_segments and flags[
+                next_seq_num] == 0 and next_seq_num < send_base + send_window_size:
                 self.sendto(all_segments[next_seq_num].encode(), self._connect_addr)
                 threading.Thread(target=self.start_timer).start()
-                flags[next_seq_num]=2
-                next_seq_num+=1
+                flags[next_seq_num] = 2
+                next_seq_num += 1
 
-            if send_base>=num_of_segments:
+            if send_base >= num_of_segments:
                 break
 
         self.send_fin_handshake()
@@ -234,68 +237,68 @@ class RDTSocket(UnreliableSocket):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
 
         while True:
-            data, addr=self.recvfrom(4096)
+            data, addr = self.recvfrom(4096)
 
-            segment_recieved=Segment.decode(data)
-            if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
-                continue # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
-            elif not segment_recieved.is_ack():
-                continue # 收到的不是 ack，丢掉不管
-            elif flags[segment_recieved.ack_num]==1:
-                continue # 收到的 ack 是已经 ack 过的，丢掉不管
-            elif flags[segment_recieved.ack_num]==0:
-                continue # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
+            segment_received = Segment.decode(data)
+            if segment_received.checksum != Segment.calculate_checksum(segment_received):
+                continue  # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
+            elif not segment_received.is_ack():
+                continue  # 收到的不是 ack，丢掉不管
+            elif flags[segment_received.ack_num] == 1:
+                continue  # 收到的 ack 是已经 ack 过的，丢掉不管
+            elif flags[segment_received.ack_num] == 0:
+                continue  # 对面nt吗 ack 了一个老子还没发的包，丢掉不管，虽然我觉得这种情况不会发生，但还是写一下吧
 
             # 以下为正常接收 ack 之后
-            flags[segment_recieved.ack_num]=1
-            timers[segment_recieved.ack_num].closed=True # 关闭 timer
+            flags[segment_received.ack_num] = 1
+            timers[segment_received.ack_num].closed = True  # 关闭 timer
 
             # 发送窗口变大
-            if send_window_size<self.SSTHRESH:
+            if send_window_size < self.SSTHRESH:
                 self.threadLock.acquire()
-                send_window_size+=1 # 指数增长阶段
+                send_window_size += 1  # 指数增长阶段
                 self.threadLock.release()
             else:
-                temp+=Fraction(1, send_window_size)
-                if temp==1:
-                    send_window_size+=1
-                    temp=0
+                temp += Fraction(1, send_window_size)
+                if temp == 1:
+                    send_window_size += 1
+                    temp = 0
 
-            while send_base<num_of_segments and flags[send_base]==1:
-                send_base+=1 # 窗口一直滑到第一个没收到 ack 的包的位置
-            if send_base>=num_of_segments:
-                break # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
+            while send_base < num_of_segments and flags[send_base] == 1:
+                send_base += 1  # 窗口一直滑到第一个没收到 ack 的包的位置
+            if send_base >= num_of_segments:
+                break  # send_base 已经滑出 all_segments 了，证明所有包都正确传输完毕了，可以结束了
 
     def start_timer(self):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
-        
-        if next_seq_num>=num_of_segments:
+
+        if next_seq_num >= num_of_segments:
             return
 
-        timer_index=next_seq_num
+        timer_index = next_seq_num
 
         while True:
             if timers[timer_index].closed:
                 if DEBUG:
-                    print("Timer "+str(timer_index)+" closed")
+                    print("Timer " + str(timer_index) + " closed")
                 break
             try:
                 timers[timer_index].start(self.TIMEOUT_VALUE)
                 if DEBUG:
-                    print("Timer "+str(timer_index)+" started")
+                    print("Timer " + str(timer_index) + " started")
             except TimeoutException:
-                resend_index=timer_index # 这个下标就是我要重传的包的下标
+                resend_index = timer_index  # 这个下标就是我要重传的包的下标
                 if DEBUG:
-                    print("Segment "+str(resend_index)+" timeout")
-                self.sendto(all_segments[resend_index].encode(), self._connect_addr) # 重发这个包
+                    print("Segment " + str(resend_index) + " timeout")
+                self.sendto(all_segments[resend_index].encode(), self._connect_addr)  # 重发这个包
                 # 拥塞控制，发送窗口大小=1，重设阈值
-                self.SSTHRESH=send_window_size/2
+                self.SSTHRESH = send_window_size / 2
                 self.threadLock.acquire()
-                send_window_size=1
+                send_window_size = 1
                 self.threadLock.release()
 
     def send_fin_handshake(self):
-        self.flag=False
+        self.flag = False
         threading.Thread(target=self.recv_ack_handshake_after_send_fin_handshake).start()
 
         while True:
@@ -311,18 +314,18 @@ class RDTSocket(UnreliableSocket):
             print("Send OK")
 
     def recv_ack_handshake_after_send_fin_handshake(self):
-        # recieve ack
+        # receive ack
         while True:
-            data, addr=self.recvfrom(4096)
-            if addr!=self._connect_addr:
+            data, addr = self.recvfrom(4096)
+            if addr != self._connect_addr:
                 if DEBUG:
                     print("A stranger is sending data to me")
                 continue
-            segment=Segment.decode(data)
-            if segment.checksum!=Segment.calculate_checksum(segment):
+            segment = Segment.decode(data)
+            if segment.checksum != Segment.calculate_checksum(segment):
                 continue
             if segment.is_ack_handshake():
-                self.flag=True
+                self.flag = True
                 break
 
     def recv(self, bufsize) -> bytes:
@@ -338,68 +341,68 @@ class RDTSocket(UnreliableSocket):
         assert self._connect_addr, "Connection not established yet. Use recvfrom instead."
 
         # 初始化接收窗口
-        recv_window_size=8 # 这个 size 好像没啥用
-        recv_base=0
+        recv_window_size = 8  # 这个 size 好像没啥用
+        recv_base = 0
 
         # 不知道对面一共要发几个包，接收窗口只能设成最大长度了
-        max_num_of_recieved_segments=math.ceil(bufsize/Segment.MAX_PAYLOAD_SIZE) # ceil 还是 floor?
-        recv_window=[None]*max_num_of_recieved_segments
+        max_num_of_received_segments = math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)  # ceil 还是 floor?
+        recv_window = [None] * max_num_of_received_segments
 
-        # 接收窗口收到了连续的包之后，就 extend 到 all_payloads，最后接收完了之后 return bytes(all_recieved_payloads)，这就是发送方发的所有有效载荷
-        all_recieved_payloads=bytearray()
+        # 接收窗口收到了连续的包之后，就 extend 到 all_payloads，最后接收完了之后 return bytes(all_received_payloads)，这就是发送方发的所有有效载荷
+        all_received_payloads = bytearray()
 
         while True:
             # 只收来自 _connect_addr 的消息  
-            data, addr=self.recvfrom(bufsize)
-            if addr!=self._connect_addr:
+            data, addr = self.recvfrom(bufsize)
+            if addr != self._connect_addr:
                 if DEBUG:
                     print("A stranger is sending data to me")
                 continue
 
-            segment_recieved=Segment.decode(data)
+            segment_received = Segment.decode(data)
 
-            if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
-                continue # 收到坏包，直接丢弃，等对面超时重发
-            elif segment_recieved.is_fin_handshake():
-                self.send_ack_handshake() # 收到 fin，回 ack, 一段时间后停止接收
+            if segment_received.checksum != Segment.calculate_checksum(segment_received):
+                continue  # 收到坏包，直接丢弃，等对面超时重发
+            elif segment_received.is_fin_handshake():
+                self.send_ack_handshake()  # 收到 fin，回 ack, 一段时间后停止接收
                 break
-            elif segment_recieved.seq_num<recv_base:
-                self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._connect_addr) # 收到了已经交付的包，回个 ack
+            elif segment_received.seq_num < recv_base:
+                self.sendto(Segment(ack_num=segment_received.seq_num).encode(), self._connect_addr)  # 收到了已经交付的包，回个 ack
                 continue
-            elif segment_recieved.seq_num>=recv_base+recv_window_size:
-                continue # 超出接收窗口了，丢弃
+            elif segment_received.seq_num >= recv_base + recv_window_size:
+                continue  # 超出接收窗口了，丢弃
 
             # 以下为正确接收
-            self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._connect_addr)
-            recv_window[segment_recieved.seq_num]=segment_recieved
-            while recv_base<max_num_of_recieved_segments and recv_window[recv_base]:
-                all_recieved_payloads.extend(recv_window[recv_base].payload)
-                recv_base+=1
+            self.sendto(Segment(ack_num=segment_received.seq_num).encode(), self._connect_addr)
+            recv_window[segment_received.seq_num] = segment_received
+            while recv_base < max_num_of_received_segments and recv_window[recv_base]:
+                all_received_payloads.extend(recv_window[recv_base].payload)
+                recv_base += 1
 
-        return bytes(all_recieved_payloads)
+        return bytes(all_received_payloads)
 
     def send_ack_handshake(self):
         self.setblocking(False)
-        start_time=time.time()
+        start_time = time.time()
         while True:
-            end_time=time.time()
-            if end_time-start_time>1: # 等待这个时间之后就结束 recv 状态
+            end_time = time.time()
+            if end_time - start_time > 1:  # 等待这个时间之后就结束 recv 状态
                 self.setblocking(True)
                 break
 
-            # recieve fin
+            # receive fin
             try:
-                data, addr=self.recvfrom(4096)
+                data, addr = self.recvfrom(4096)
             except BlockingIOError:
                 continue
 
-            if addr!=self._connect_addr:
+            if addr != self._connect_addr:
                 if DEBUG:
                     print("A stranger is sending data to me")
                 continue
 
-            segment=Segment.decode(data)
-            if segment.checksum!=Segment.calculate_checksum(segment):
+            segment = Segment.decode(data)
+            if segment.checksum != Segment.calculate_checksum(segment):
                 continue
 
             # then send ack
@@ -429,14 +432,15 @@ class RDTSocket(UnreliableSocket):
         #         if segment.is_fin_handshake():
         #             self.sendto(Segment.ack_handshake().encode(), self._send_to_addr)
         #             break
-                    
+
         super().close()
-        
+
     def set_connect_addr(self, addr):
-        self._connect_addr=addr
-    
+        self._connect_addr = addr
+
+
 class Segment:
-    '''
+    """
     field       length          range               type
     --------------------------------------------------------------
     syn:        1 bit           0 ~ 1               bool
@@ -447,34 +451,35 @@ class Segment:
     length:     4 byte=32 bit   0 ~ 4294967295      unsigned int
     checksum:   2 byte=16 bit   0 ~ 65535           unsigned short
     payload:    0 ~ length byte -                   bytes
-    '''
+    """
 
-    MAX_NUM=4294967295 # 2^32-1 (32位无符号)
+    MAX_NUM = 4294967295  # 2^32-1 (32位无符号)
     # python3 的 int 没有范围限制, 不会 overflow 除非大到电脑内存满了
 
-    MAX_PAYLOAD_SIZE=1007 # 1007+17=1KB，最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
-    MAX_SEGMENT_SIZE=MAX_PAYLOAD_SIZE+17
+    MAX_PAYLOAD_SIZE = 1007  # 1007+17=1KB，最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
+    MAX_SEGMENT_SIZE = MAX_PAYLOAD_SIZE + 17
 
-    def __init__(self, syn:bool=False, fin:bool=False, ack:bool=False, seq_num:int=-1, ack_num:int=-1, length:int=0, checksum=None, payload:bytes=None):
-        self.syn=syn
-        self.fin=fin
-        self.ack=ack
-        self.seq_num=seq_num%(Segment.MAX_NUM+1)
-        self.ack_num=ack_num%(Segment.MAX_NUM+1)
-        self.length=length
-        self.checksum=checksum
-        self.payload=payload
+    def __init__(self, syn: bool = False, fin: bool = False, ack: bool = False, seq_num: int = -1, ack_num: int = -1,
+                 length: int = 0, checksum=None, payload: bytes = None):
+        self.syn = syn
+        self.fin = fin
+        self.ack = ack
+        self.seq_num = seq_num % (Segment.MAX_NUM + 1)
+        self.ack_num = ack_num % (Segment.MAX_NUM + 1)
+        self.length = length
+        self.checksum = checksum
+        self.payload = payload
 
     def __str__(self):
-        return ("----------------------------------------------\n"+
-               "syn="+str(self.syn)+", "+"fin="+str(self.fin)+", "+"ack="+str(self.ack)+"\n"+
-               "seq_num="+str(self.seq_num)+", "+"ack_num="+str(self.ack_num)+"\n"+
-               "length="+str(self.length)+"\n"+"checksum="+str(self.checksum)+"\n"+
-               "payload="+(self.payload.decode() if self.payload else "None")+"\n"+
-               "---------------------------------------------------------------\n")
+        return ("----------------------------------------------\n" +
+                "syn=" + str(self.syn) + ", " + "fin=" + str(self.fin) + ", " + "ack=" + str(self.ack) + "\n" +
+                "seq_num=" + str(self.seq_num) + ", " + "ack_num=" + str(self.ack_num) + "\n" +
+                "length=" + str(self.length) + "\n" + "checksum=" + str(self.checksum) + "\n" +
+                "payload=" + (self.payload.decode() if self.payload else "None") + "\n" +
+                "---------------------------------------------------------------\n")
 
     def encode(self) -> bytes:
-        '''
+        """
         将报文编码成字节流
 
         ! 表示网络传输
@@ -482,51 +487,53 @@ class Segment:
         I 表示 无符号int    (4 byte)
         H 表示 无符号short  (2 byte)
         B 表示 无符号char   (1 byte)
-        '''
-        self.checksum=Segment.calculate_checksum(self)
+        """
+        self.checksum = Segment.calculate_checksum(self)
 
-        data=bytearray(struct.pack("!???IIIH", self.syn, self.fin, self.ack, self.seq_num, self.ack_num, self.length, self.checksum))
+        data = bytearray(struct.pack("!???IIIH", self.syn, self.fin, self.ack, self.seq_num, self.ack_num, self.length,
+                                     self.checksum))
         # 现在 header 封装完毕，header 长度为 17 byte (1+1+1+4+4+4+2)
         # XXX: 前三个 bit 其实用一个 byte 表示就够了, header 长度减小到 15 byte
 
         if self.payload:
-            data.extend(self.payload) # 在后面加上数据
+            data.extend(self.payload)  # 在后面加上数据
 
         if DEBUG:
-            print("--- send segment "+str(self))
+            print("--- send segment " + str(self))
 
         return bytes(data)
 
     @staticmethod
-    def decode(data:bytes) -> "Segment":
-        '''
+    def decode(data: bytes) -> "Segment":
+        """
         将收到的字节流解码为报文
-        '''
-        syn, fin, ack, seq_num, ack_num, length, checksum=struct.unpack("!???IIIH", data[:17])
+        """
+        syn, fin, ack, seq_num, ack_num, length, checksum = struct.unpack("!???IIIH", data[:17])
         # 注意 python 没有 short 类型, checksum 是个 int
-        payload=data[17:] # 注意如果 data 里没有数据的话, 这里 payload=b'' 空字符串
-        segment=Segment(syn, fin, ack, seq_num, ack_num, length, checksum, payload)
+        payload = data[17:]  # 注意如果 data 里没有数据的话, 这里 payload=b'' 空字符串
+        segment = Segment(syn, fin, ack, seq_num, ack_num, length, checksum, payload)
 
         if DEBUG:
-            print("--- recv segment "+str(segment))
+            print("--- recv segment " + str(segment))
 
         return segment
-    
+
     @staticmethod
-    def calculate_checksum(segment:"Segment") -> int:
-        '''
+    def calculate_checksum(segment: "Segment") -> int:
+        """
         用除了 checksum 之外的所有字段算 checksum
-        '''
-        temp=bytearray(struct.pack("!???III", segment.syn, segment.fin, segment.ack, segment.seq_num, segment.ack_num, segment.length))
+        """
+        temp = bytearray(struct.pack("!???III", segment.syn, segment.fin, segment.ack, segment.seq_num, segment.ack_num,
+                                     segment.length))
         if segment.payload:
             temp.extend(segment.payload)
-        i=iter(temp)
-        bytes_sum=sum(((a<<8)+b for a, b in zip(i, i)))  # for a, b: (s[0], s[1]), (s[2], s[3]), ...
-        if len(temp)%2==1:  # pad zeros to form a 16-bit word for checksum
-            bytes_sum+=temp[-1] << 8
+        i = iter(temp)
+        bytes_sum = sum(((a << 8) + b for a, b in zip(i, i)))  # for a, b: (s[0], s[1]), (s[2], s[3]), ...
+        if len(temp) % 2 == 1:  # pad zeros to form a 16-bit word for checksum
+            bytes_sum += temp[-1] << 8
         # add the overflow 1 at the end (adding twice is sufficient)
-        bytes_sum=(bytes_sum & 0xFFFF)+(bytes_sum>>16)
-        bytes_sum=(bytes_sum & 0xFFFF)+(bytes_sum>>16)
+        bytes_sum = (bytes_sum & 0xFFFF) + (bytes_sum >> 16)
+        bytes_sum = (bytes_sum & 0xFFFF) + (bytes_sum >> 16)
         return ~bytes_sum & 0xFFFF
 
     # seq_num=ack_num=-1 表示这是握手报文段
@@ -538,7 +545,7 @@ class Segment:
     @staticmethod
     def synack_handshake(seq_num=-1, ack_num=-1):
         return Segment(syn=True, fin=False, ack=True, seq_num=seq_num, ack_num=ack_num)
-    
+
     @staticmethod
     def ack_handshake(seq_num=-1, ack_num=-1):
         return Segment(syn=False, fin=False, ack=True, seq_num=seq_num, ack_num=ack_num)
@@ -549,7 +556,7 @@ class Segment:
 
     def is_syn_handshake(self) -> bool:
         return self.syn and not self.fin and not self.ack
-    
+
     def is_synack_handshake(self) -> bool:
         return self.syn and not self.fin and self.ack
 
@@ -560,20 +567,22 @@ class Segment:
         return not self.syn and self.fin and not self.ack
 
     def is_ack(self) -> bool:
-        return not self.syn and not self.fin and not self.ack and self.seq_num==self.MAX_NUM and self.length==0
+        return not self.syn and not self.fin and not self.ack and self.seq_num == self.MAX_NUM and self.length == 0
+
 
 class Timer:
     def __init__(self):
-        self.closed=False
-    
+        self.closed = False
+
     def start(self, timeout_value):
-        start=time.time()
+        start = time.time()
         while True:
             if self.closed:
                 break
-            end=time.time()
-            if end-start>timeout_value:
+            end = time.time()
+            if end - start > timeout_value:
                 raise TimeoutException()
+
 
 class TimeoutException(Exception):
     def __init__(self):
