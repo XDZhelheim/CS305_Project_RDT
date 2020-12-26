@@ -83,15 +83,30 @@ class RDTSocket(UnreliableSocket):
         conn, addr=RDTSocket(self._rate), None
         conn.bind(('127.0.0.1', 0)) # 0 表示随机分配端口
 
-        # start_time=time.time()
+        data, addr=None, None
+        flag=False # 要从第一次收到包开始计时，用来标记是否收到第一个包。如果一上来就开始计时那运行到 end_time 那一行之后肯定就超时退出了
         while True:
-            # end_time=time.time()
-            # if end_time-start_time>2:
-            #     raise TimeoutException()
             # 发回去的 synack 可能丢包，这时候 client 会继续发 syn 过来，所以需要一段时间继续监听
 
+            if data and addr:
+                self.setblocking(False)
+                if flag:
+                    start_time=time.time()
+                    flag=False
+                end_time=time.time()
+                if end_time-start_time>1: # 等待这个时间之后就结束
+                    self.setblocking(True)
+                    break
+
             # recieve syn
-            data, addr=self.recvfrom(4096)
+            try:
+                data, addr=self.recvfrom(4096)
+            except BlockingIOError:
+                continue
+
+            if not flag:
+                flag=True
+
             segment=Segment.decode(data)
             if segment.checksum!=Segment.calculate_checksum(segment):
                 continue
@@ -100,18 +115,7 @@ class RDTSocket(UnreliableSocket):
             if segment.is_syn_handshake():
                 conn.sendto(Segment.synack_handshake().encode(), addr)
                 conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
-                break
 
-                # # recieve ack
-                # data, addr2=conn.recvfrom(4096) # recvfrom 是阻塞的，会一直在这等着直到收到消息
-                # segment=Segment.decode(data)
-                # if addr==addr2 and segment.is_ack_handshake():
-                #     conn.set_connect_addr(addr) # 连上了，以后就收 addr 发的消息
-
-                #     if DEBUG:
-                #         print("Accept OK")
-
-                #     return conn, addr
         if DEBUG:
             print("Accept OK")
 
@@ -135,6 +139,8 @@ class RDTSocket(UnreliableSocket):
 
             if self.flag:
                 break
+
+            time.sleep(0.1)
 
             # # recieve synack
             # data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
