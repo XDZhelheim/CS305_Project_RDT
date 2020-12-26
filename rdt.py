@@ -15,7 +15,7 @@ from fractions import Fraction
 
 DEBUG = True
 
-#---这些是 send() 多线程用的 global 变量----------------------------------
+# ---这些是 send() 多线程用的 global 变量----------------------------------
 all_segments = []
 send_window_size = 1
 send_base = 0
@@ -24,7 +24,9 @@ temp = 0
 num_of_segments = 0
 flags = []
 timers = []
-#----------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------
 
 class RDTSocket(UnreliableSocket):
     """
@@ -93,10 +95,10 @@ class RDTSocket(UnreliableSocket):
             if data and addr:
                 self.setblocking(False)
                 if flag:
-                    start_time=time.time() # 每次收到 syn 就会重新计时，所以我是收到 syn 之后，如果 1s 内没有再次收到新 syn 就 break
-                    flag=False
-                end_time=time.time()
-                if end_time-start_time>1: # 等待这个时间之后就结束
+                    start_time = time.time()  # 每次收到 syn 就会重新计时，所以我是收到 syn 之后，如果 1s 内没有再次收到新 syn 就 break
+                    flag = False
+                end_time = time.time()
+                if end_time - start_time > 1:  # 等待这个时间之后就结束
                     self.setblocking(True)
                     break
 
@@ -108,10 +110,10 @@ class RDTSocket(UnreliableSocket):
 
             if not flag:
                 flag = True
-            
+
             if not Segment.check_checksum(data):
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
             segment = Segment.decode(data)
 
@@ -155,7 +157,7 @@ class RDTSocket(UnreliableSocket):
             data, addr2 = self.recvfrom(4096)  # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
             if not Segment.check_checksum(data):
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
             segment = Segment.decode(data)
             if segment.is_synack_handshake():
@@ -226,9 +228,9 @@ class RDTSocket(UnreliableSocket):
         while True:
             data, addr = self.recvfrom(4096)
 
-            if not Segment.check_checksum(data): # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
+            if not Segment.check_checksum(data):  # 如果收到的包是有错的，直接丢掉不管，反正对面已经正确接收了，大不了超时重发让对面再 ack 一次
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
 
             segment_received = Segment.decode(data)
@@ -313,7 +315,7 @@ class RDTSocket(UnreliableSocket):
                 continue
             if not Segment.check_checksum(data):
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
             segment = Segment.decode(data)
             if segment.is_ack_handshake():
@@ -351,9 +353,9 @@ class RDTSocket(UnreliableSocket):
                     print("A stranger is sending data to me")
                 continue
 
-            if not Segment.check_checksum(data): # 收到坏包，直接丢弃，等对面超时重发
+            if not Segment.check_checksum(data):  # 收到坏包，直接丢弃，等对面超时重发
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
 
             segment_received = Segment.decode(data)
@@ -370,10 +372,10 @@ class RDTSocket(UnreliableSocket):
             # 以下为正确接收
             self.sendto(Segment(ack_num=segment_received.seq_num).encode(), self._connect_addr)
 
-            if segment_received.seq_num>=len(recv_window)-1:
-                temp=[None]*math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
-                recv_window+=temp
-                max_num_of_received_segments+=math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
+            if segment_received.seq_num >= len(recv_window) - 1:
+                temp = [None] * math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
+                recv_window += temp
+                max_num_of_received_segments += math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
 
             recv_window[segment_received.seq_num] = segment_received
             while recv_base < max_num_of_received_segments and recv_window[recv_base]: # 交付数据，滑动窗口
@@ -384,13 +386,13 @@ class RDTSocket(UnreliableSocket):
 
     def send_ack_handshake(self):
         self.setblocking(False)
-        flag=True
+        flag = True
         while True:
             if flag:
-                start_time=time.time()
-                flag=False
-            end_time=time.time()
-            if end_time-start_time>1: # 等待这个时间之后就结束
+                start_time = time.time()
+                flag = False
+            end_time = time.time()
+            if end_time - start_time > 1:  # 等待这个时间之后就结束
                 self.setblocking(True)
                 break
 
@@ -401,7 +403,7 @@ class RDTSocket(UnreliableSocket):
                 continue
 
             if not flag:
-                flag=True
+                flag = True
 
             if addr != self._connect_addr:
                 if DEBUG:
@@ -410,7 +412,7 @@ class RDTSocket(UnreliableSocket):
 
             if not Segment.check_checksum(data):
                 if DEBUG:
-                    print("Recieved corrupted data")
+                    print("Received corrupted data")
                 continue
 
             segment = Segment.decode(data)
@@ -485,7 +487,9 @@ class Segment:
         self.checksum = Segment.calculate_checksum(self)
 
         # checksum 要放第一位，否则检查 checksum 的时候会错开 1 位，因为 header 的总长度是奇数
-        data = bytearray(struct.pack("!H???III", self.checksum, self.syn, self.fin, self.ack, self.seq_num, self.ack_num, self.length))
+        data = bytearray(
+            struct.pack("!H???III", self.checksum, self.syn, self.fin, self.ack, self.seq_num, self.ack_num,
+                        self.length))
         # 现在 header 封装完毕，header 长度为 17 byte (2+1+1+1+4+4+4)
         # XXX: 三个 bit 其实用一个 byte 表示就够了, header 长度减小到 15 byte
 
@@ -538,7 +542,7 @@ class Segment:
             bytes_sum += data[-1] << 8
         bytes_sum = (bytes_sum & 0xFFFF) + (bytes_sum >> 16)
         bytes_sum = (bytes_sum & 0xFFFF) + (bytes_sum >> 16)
-        return bytes_sum & 0xFFFF==0xFFFF
+        return bytes_sum & 0xFFFF == 0xFFFF
 
     # seq_num=ack_num=-1 表示这是握手报文段
     # 编码的时候 -1 会编码成 4294967295
