@@ -24,8 +24,6 @@ temp = 0
 num_of_segments = 0
 flags = []
 timers = []
-
-
 # ----------------------------------------------------------------------
 
 class RDTSocket(UnreliableSocket):
