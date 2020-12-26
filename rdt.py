@@ -121,7 +121,7 @@ class RDTSocket(UnreliableSocket):
 
         return conn, addr
 
-    flag=False
+    flag=False # 这个 flag 只在 connect() 和 recv_synack_handshake() 和最后的 fin 里用
     def connect(self, addr:(str, int)):
         """
         Connect to a remote socket at address.
@@ -131,7 +131,7 @@ class RDTSocket(UnreliableSocket):
         self.flag=False
         self.bind(('127.0.0.1', 0))
 
-        threading.Thread(target=self.recv_synack).start()
+        threading.Thread(target=self.recv_synack_handshake).start()
 
         while True:
             # send syn
@@ -142,21 +142,10 @@ class RDTSocket(UnreliableSocket):
 
             time.sleep(0.1)
 
-            # # recieve synack
-            # data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
-            # segment=Segment.decode(data)
-
-            # # send ack
-            # if segment.is_synack_handshake():
-            #     self.sendto(Segment.ack_handshake().encode(), addr2)
-            #     self.set_connect_addr(addr2) # 连上了，以后就给 conn 发消息，addr2 就是 conn 的地址
-
-            #     break
-
         if DEBUG:
             print("Connect OK")
 
-    def recv_synack(self):
+    def recv_synack_handshake(self):
         # recieve synack
         while True:
             data, addr2=self.recvfrom(4096) # 这里收到的 synack 是 conn 发过来的，所以 addr2 一定 != addr
@@ -225,19 +214,21 @@ class RDTSocket(UnreliableSocket):
             if send_base>=num_of_segments:
                 break
 
-        # 发个 fin 告诉你我发完了，你那边可以停止接收了
-        start=time.time()
-        while True:
-            end=time.time()
-            if end-start>0.1:
-                break # 对面发回来的 ack 可能丢失，我一共就等 0.1s，反正数据都正确传好了，最多 0.1s 我就结束
-            self.sendto(Segment.fin_handshake().encode(), self._connect_addr)
-            data, addr=None, None
-            data, addr=self.recvfrom(4096)
-            if addr!=self._connect_addr:
-                continue
-            if data:
-                break # 也别管收到的 ack 有没有错了，收到东西就证明对面收到我的 fin 了，停止发送
+        self.send_fin_handshake()
+
+        # # 发个 fin 告诉你我发完了，你那边可以停止接收了
+        # start=time.time()
+        # while True:
+        #     end=time.time()
+        #     if end-start>0.1:
+        #         break # 对面发回来的 ack 可能丢失，我一共就等 0.1s，反正数据都正确传好了，最多 0.1s 我就结束
+        #     self.sendto(Segment.fin_handshake().encode(), self._connect_addr)
+        #     data, addr=None, None
+        #     data, addr=self.recvfrom(4096)
+        #     if addr!=self._connect_addr:
+        #         continue
+        #     if data:
+        #         break # 也别管收到的 ack 有没有错了，收到东西就证明对面收到我的 fin 了，停止发送
 
     def recv_ack(self):
         global all_segments, send_window_size, send_base, next_seq_num, temp, num_of_segments, flags, timers
@@ -302,7 +293,38 @@ class RDTSocket(UnreliableSocket):
                 self.threadLock.acquire()
                 send_window_size=1
                 self.threadLock.release()
-            
+
+    def send_fin_handshake(self):
+        self.flag=False
+        threading.Thread(target=self.recv_ack_handshake_after_send_fin_handshake).start()
+
+        while True:
+            # send fin
+            self.sendto(Segment.fin_handshake().encode(), self._connect_addr)
+
+            if self.flag:
+                break
+
+            time.sleep(0.1)
+
+        if DEBUG:
+            print("Send OK")
+
+    def recv_ack_handshake_after_send_fin_handshake(self):
+        # recieve ack
+        while True:
+            data, addr=self.recvfrom(4096)
+            if addr!=self._connect_addr:
+                if DEBUG:
+                    print("A stranger is sending data to me")
+                continue
+            segment=Segment.decode(data)
+            if segment.checksum!=Segment.calculate_checksum(segment):
+                continue
+            if segment.is_ack_handshake():
+                self.flag=True
+                break
+
     def recv(self, bufsize) -> bytes:
         """
         Receive data from the socket. 
@@ -329,20 +351,17 @@ class RDTSocket(UnreliableSocket):
         while True:
             # 只收来自 _connect_addr 的消息  
             data, addr=self.recvfrom(bufsize)
-            # if addr!=self._connect_addr:
-            #     continue
+            if addr!=self._connect_addr:
+                if DEBUG:
+                    print("A stranger is sending data to me")
+                continue
 
             segment_recieved=Segment.decode(data)
 
             if segment_recieved.checksum!=Segment.calculate_checksum(segment_recieved):
                 continue # 收到坏包，直接丢弃，等对面超时重发
-            # elif segment_recieved.length==1234567: # 模拟错包
-            #     continue
-            # elif segment_recieved.is_syn_handshake():
-            #     self.sendto(Segment.synack_handshake().encode(), self._connect_addr)
-            #     continue
             elif segment_recieved.is_fin_handshake():
-                self.sendto(Segment.ack_handshake().encode(), self._connect_addr) # 收到 fin，停止接收
+                self.send_ack_handshake() # 收到 fin，回 ack, 一段时间后停止接收
                 break
             elif segment_recieved.seq_num<recv_base:
                 self.sendto(Segment(ack_num=segment_recieved.seq_num).encode(), self._connect_addr) # 收到了已经交付的包，回个 ack
@@ -358,6 +377,37 @@ class RDTSocket(UnreliableSocket):
                 recv_base+=1
 
         return bytes(all_recieved_payloads)
+
+    def send_ack_handshake(self):
+        self.setblocking(False)
+        start_time=time.time()
+        while True:
+            end_time=time.time()
+            if end_time-start_time>1: # 等待这个时间之后就结束 recv 状态
+                self.setblocking(True)
+                break
+
+            # recieve fin
+            try:
+                data, addr=self.recvfrom(4096)
+            except BlockingIOError:
+                continue
+
+            if addr!=self._connect_addr:
+                if DEBUG:
+                    print("A stranger is sending data to me")
+                continue
+
+            segment=Segment.decode(data)
+            if segment.checksum!=Segment.calculate_checksum(segment):
+                continue
+
+            # then send ack
+            if segment.is_fin_handshake():
+                self.sendto(Segment.ack_handshake().encode(), self._connect_addr)
+
+        if DEBUG:
+            print("Receive OK")
 
     def close(self):
         """
