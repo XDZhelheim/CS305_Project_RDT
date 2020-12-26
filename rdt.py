@@ -376,6 +376,12 @@ class RDTSocket(UnreliableSocket):
 
             # 以下为正确接收
             self.sendto(Segment(ack_num=segment_received.seq_num).encode(), self._connect_addr)
+
+            if segment_received.seq_num>=len(recv_window)-1:
+                temp=[None]*math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
+                recv_window+=temp
+                max_num_of_received_segments+=math.ceil(bufsize / Segment.MAX_PAYLOAD_SIZE)
+
             recv_window[segment_received.seq_num] = segment_received
             while recv_base < max_num_of_received_segments and recv_window[recv_base]:
                 all_received_payloads.extend(recv_window[recv_base].payload)
@@ -451,7 +457,7 @@ class Segment:
     MAX_NUM = 4294967295  # 2^32-1 (32位无符号)
     # python3 的 int 没有范围限制, 不会 overflow 除非大到电脑内存满了
 
-    MAX_PAYLOAD_SIZE = 1007  # 1007+17=1KB，最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
+    MAX_PAYLOAD_SIZE = 2000  # 最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
     MAX_SEGMENT_SIZE = MAX_PAYLOAD_SIZE + 17
 
     def __init__(self, syn: bool = False, fin: bool = False, ack: bool = False, seq_num: int = -1, ack_num: int = -1,

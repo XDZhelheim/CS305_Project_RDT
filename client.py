@@ -9,9 +9,9 @@ if __name__ == '__main__':
     client.connect(('127.0.0.1', 9999))
 
     echo = b''
-    count = 1
+    count = 2
     slice_size = 2048
-    blocking_send = True
+    blocking_send = False
 
     with open('alice.txt', 'r') as f:
         data = f.read()
