@@ -55,6 +55,7 @@ class RDTSocket(UnreliableSocket):
         2. client 向 server (port=1234) 发 syn
         3. server 收到 syn 了，他会新建一个叫 conn 的 socket，把他许配给这个 client，这个 conn 的端口号由系统自动分配
         4. conn 向刚才那个 client 发 synack (发的时候，系统底层会自动分配给 conn 一个端口)，从此以后，server 和这个 client 之间的所有收发全部由 conn 接手
+            注: 现在改成 conn 手动 bind 了
         5. client 收到了 synack，他发现是从一个新 port 发过来的，于是他知道对面的 server 给他分配了一个 conn，他把 conn 的地址记下来，以后有什么数据就发往 conn 的地址
         6. client 向 conn 发 ack
         7. conn 收到 ack，三次握手完成
