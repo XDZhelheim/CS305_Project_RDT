@@ -7,6 +7,8 @@ if __name__ == "__main__":
         while True:
             print("input data:")
             data = input()
+            if data=="alice":
+                data=open("alice.txt", "r").read()
             client.send(data.encode())
             if data == "exit" or data == "quit":
                 break

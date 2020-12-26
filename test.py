@@ -1,4 +1,5 @@
 import struct
+from rdt import Segment
 
 a = bytearray(struct.pack("!???IIIH", True, False, True, 4294967295, 4294967295, 4294967295, 6667))
 s = "test message".encode()
@@ -17,3 +18,7 @@ print(b)
 # print(type(b[6]))
 msg = a[17:].decode()
 print(msg)
+
+c=Segment(seq_num=1234, length=4, payload=b'4567').encode()
+print(c)
+print(Segment.check_checksum(c))

@@ -40,7 +40,7 @@ class Server(ThreadingUDPServer):
     def finish_request(self, request, client_address):
         data, socket = request
         loss_rate = 0
-        corrupt_rate = 0.1
+        corrupt_rate = 0.5
 
         with lock:
             if self.rate:
