@@ -173,7 +173,7 @@ class RDTSocket(UnreliableSocket):
     现在已经没有什么 ack=seq+length 了，那个是 TCP 的玩法
     '''
 
-    TIMEOUT_VALUE = 0.1  # 0.1s 认为超时
+    TIMEOUT_VALUE = 0.5 # 认为超时的阈值
     SSTHRESH = 8  # 慢启动阈值
     threadLock = threading.Lock()
 
@@ -254,6 +254,12 @@ class RDTSocket(UnreliableSocket):
                     send_window_size += 1
                     temp = 0
 
+            # 减小 timeout 阈值
+            if self.TIMEOUT_VALUE>0.1:
+                self.TIMEOUT_VALUE-=0.1
+                if DEBUG:
+                    print("Timeout Threshold = "+str(round(self.TIMEOUT_VALUE, 1))+"s")
+
             while send_base < num_of_segments and flags[send_base] == 1:
                 send_base += 1  # 窗口一直滑到第一个没收到 ack 的包的位置
             if send_base >= num_of_segments:
@@ -286,6 +292,11 @@ class RDTSocket(UnreliableSocket):
                 self.threadLock.acquire()
                 send_window_size = 1
                 self.threadLock.release()
+
+                # 增大 timeout 阈值
+                self.TIMEOUT_VALUE+=0.2
+                if DEBUG:
+                    print("Timeout Threshold = "+str(round(self.TIMEOUT_VALUE, 1))+"s")
 
     def send_fin_handshake(self):
         self.flag = False
