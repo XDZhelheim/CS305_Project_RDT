@@ -462,7 +462,7 @@ class Segment:
     MAX_NUM = 4294967295  # 2^32-1 (32位无符号)
     # python3 的 int 没有范围限制, 不会 overflow 除非大到电脑内存满了
 
-    MAX_PAYLOAD_SIZE = 2000  # 最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
+    MAX_PAYLOAD_SIZE = 1007  # 最长 payload 长度，在 send() 里分段的时候用，拥塞的时候可以减小
     MAX_SEGMENT_SIZE = MAX_PAYLOAD_SIZE + 17
 
     def __init__(self, syn: bool = False, fin: bool = False, ack: bool = False, seq_num: int = -1, ack_num: int = -1,

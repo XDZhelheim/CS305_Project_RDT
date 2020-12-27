@@ -40,7 +40,7 @@ class Server(ThreadingUDPServer):
     def finish_request(self, request, client_address):
         data, socket = request
         loss_rate = 0.1
-        corrupt_rate = 0.00001
+        corrupt_rate = 0.05
 
         with lock:
             if self.rate:
@@ -76,5 +76,5 @@ class Server(ThreadingUDPServer):
 server_address = ('127.0.0.1', 12345)
 
 if __name__ == '__main__':
-    with Server(server_address, rate=50000) as server:
+    with Server(server_address, rate=10240) as server:
         server.serve_forever()
